@@ -7,6 +7,12 @@
     "agentverus-mcp-server": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "SPEC.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
