@@ -67,8 +67,8 @@ Information about AgentVerus Scanner, version, capabilities.
 - Use `@modelcontextprotocol/sdk` Server class with stdio transport
 - Import `agentverus-scanner` functions: `scanSkill`, `scanSkillFromUrl`
 - For `check_skill`, reuse the check/source resolver logic from the scanner
-- Package as `@agentverus/mcp-server` on npm
-- Support `npx @agentverus/mcp-server` for zero-install usage
+- Package as `agentverus-scanner-mcp` on npm
+- Support `npx agentverus-scanner-mcp` for zero-install usage
 - Include a `bin` entry in package.json pointing to the compiled entry point
 - Add proper shebang (`#!/usr/bin/env node`) to the entry point
 
@@ -125,7 +125,7 @@ interface Finding {
 ## README Content
 Include:
 1. What AgentVerus is (AI agent security scanner)
-2. Installation: `npx @agentverus/mcp-server` 
+2. Installation: `npx agentverus-scanner-mcp` 
 3. Configuration examples for Claude Desktop, Cursor, Windsurf
 4. Tool descriptions with example usage
 5. Link to agentverus.ai and the scanner repo

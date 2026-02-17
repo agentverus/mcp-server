@@ -1,10 +1,10 @@
 {
-  "name": "@agentverus/mcp-server",
-  "version": "0.1.0",
+  "name": "agentverus-scanner-mcp",
+  "version": "0.1.1",
   "description": "MCP server for AgentVerus — AI agent security scanning as MCP tools",
   "type": "module",
   "bin": {
-    "agentverus-mcp-server": "./dist/index.js"
+    "agentverus-scanner-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,18 +17,27 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepublishOnly": "npm test"
   },
-  "keywords": ["mcp", "security", "agent", "scanner", "agentverus", "trust"],
+  "keywords": [
+    "mcp",
+    "security",
+    "agent",
+    "scanner",
+    "agentverus",
+    "trust"
+  ],
   "author": "AgentVerus",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentverus/mcp-server"
+    "url": "git+https://github.com/agentverus/mcp-server.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "agentverus-scanner": "^0.5.0"
+    "agentverus-scanner": "^0.5.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
@@ -36,6 +45,6 @@
     "@types/node": "^22.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

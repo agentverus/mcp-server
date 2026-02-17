@@ -6,6 +6,7 @@ import { z } from "zod";
 
 // Import scanner functions
 import { scanSkill, scanSkillFromUrl } from "agentverus-scanner";
+import { resolveSkillsShUrls } from "agentverus-scanner/registry";
 import type { TrustReport } from "agentverus-scanner";
 
 // ASST Taxonomy reference
@@ -78,6 +79,248 @@ const ASST_TAXONOMY: Record<string, { name: string; description: string; risk: s
   },
 };
 
+type SkillsShEntry = {
+  owner: string;
+  repo: string;
+  slug: string;
+  skillsShUrl: string;
+};
+
+type GithubRepoResponse = {
+  default_branch?: string;
+};
+
+type GithubTreeEntry = {
+  path?: string;
+  type?: string;
+};
+
+type GithubTreeResponse = {
+  tree?: GithubTreeEntry[];
+};
+
+const GITHUB_API_BASE = "https://api.github.com";
+const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
+const GITHUB_API_TIMEOUT_MS = 15_000;
+const GITHUB_BRANCH_FALLBACKS = ["main", "master"] as const;
+
+function isHttpUrl(source: string): boolean {
+  return source.startsWith("http://") || source.startsWith("https://");
+}
+
+function isNotFoundError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("404") || msg.includes("Not Found");
+}
+
+function formatHttpErrorBodySnippet(text: string): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length > 200 ? `${cleaned.slice(0, 200)}...` : cleaned;
+}
+
+function isSkillMarkdownPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return (
+    lower === "skill.md" ||
+    lower.endsWith("/skill.md") ||
+    lower === "skills.md" ||
+    lower.endsWith("/skills.md")
+  );
+}
+
+function rankSkillPath(path: string): number {
+  const lower = path.toLowerCase();
+  if (lower === "skill.md") return 0;
+  if (lower === "skills.md") return 1;
+  if (lower.startsWith("skills/") && lower.endsWith("/skill.md")) return 2;
+  if (lower.endsWith("/skill.md")) return 3;
+  if (lower.startsWith("skills/") && lower.endsWith("/skills.md")) return 4;
+  return 5;
+}
+
+function pathSort(a: string, b: string): number {
+  const byRank = rankSkillPath(a) - rankSkillPath(b);
+  if (byRank !== 0) return byRank;
+  const byDepth = a.split("/").length - b.split("/").length;
+  if (byDepth !== 0) return byDepth;
+  const byLength = a.length - b.length;
+  if (byLength !== 0) return byLength;
+  return a.localeCompare(b);
+}
+
+function buildRawGithubUrl(owner: string, repo: string, branch: string, path: string): string {
+  return `${GITHUB_RAW_BASE}/${owner}/${repo}/${branch}/${path}`;
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "agentverus-mcp-server/0.1.0",
+    },
+    signal: AbortSignal.timeout(GITHUB_API_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const bodyText = await response.text();
+    const suffix = formatHttpErrorBodySnippet(bodyText);
+    throw new Error(
+      `GitHub API request failed (${response.status} ${response.statusText}) for ${url}${suffix ? ` — ${suffix}` : ""}`
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+async function fetchGithubSkillPaths(
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<string[]> {
+  const treeUrl = `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+  const tree = await fetchJson<GithubTreeResponse>(treeUrl);
+  return (tree.tree ?? [])
+    .filter((entry) => entry.type === "blob" && typeof entry.path === "string")
+    .map((entry) => entry.path!)
+    .filter(isSkillMarkdownPath)
+    .sort(pathSort);
+}
+
+function scorePathMatch(path: string, skillPath: string): number {
+  const lowerPath = path.toLowerCase();
+  const normalizedInput = skillPath
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+
+  const directMatches = new Set([
+    normalizedInput,
+    `${normalizedInput}/skill.md`,
+    `${normalizedInput}/skills.md`,
+    `skills/${normalizedInput}/skill.md`,
+    `skills/${normalizedInput}/skills.md`,
+  ]);
+
+  if (directMatches.has(lowerPath)) return 0;
+
+  const inputLeaf = normalizedInput.split("/").filter(Boolean).pop();
+  if (
+    inputLeaf &&
+    (lowerPath.endsWith(`/${inputLeaf}/skill.md`) || lowerPath.endsWith(`/${inputLeaf}/skills.md`))
+  ) {
+    return 10;
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
+
+function selectGithubSkillPaths(skillPaths: string[], skillPath?: string): string[] {
+  if (!skillPath) return [...skillPaths].sort(pathSort);
+
+  const scored = skillPaths
+    .map((path) => ({ path, score: scorePathMatch(path, skillPath) }))
+    .filter((entry) => Number.isFinite(entry.score))
+    .sort((a, b) => {
+      const byScore = a.score - b.score;
+      if (byScore !== 0) return byScore;
+      return pathSort(a.path, b.path);
+    })
+    .map((entry) => entry.path);
+
+  if (scored.length > 0) return scored;
+
+  // If caller supplied a path that doesn't match and repo has a single skill file, use it.
+  return skillPaths.length === 1 ? [skillPaths[0]!] : [];
+}
+
+function buildFallbackGithubCandidates(
+  owner: string,
+  repo: string,
+  skillPath?: string
+): string[] {
+  if (!skillPath) {
+    return [
+      buildRawGithubUrl(owner, repo, "main", "SKILL.md"),
+      buildRawGithubUrl(owner, repo, "master", "SKILL.md"),
+    ];
+  }
+
+  return [
+    buildRawGithubUrl(owner, repo, "main", `skills/${skillPath}/SKILL.md`),
+    buildRawGithubUrl(owner, repo, "main", `${skillPath}/SKILL.md`),
+    buildRawGithubUrl(owner, repo, "master", `skills/${skillPath}/SKILL.md`),
+    buildRawGithubUrl(owner, repo, "master", `${skillPath}/SKILL.md`),
+  ];
+}
+
+async function resolveSkillsShToRawUrl(skillsShUrl: string): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(skillsShUrl);
+  } catch {
+    throw new Error(`Invalid URL: ${skillsShUrl}`);
+  }
+
+  if (parsed.hostname !== "skills.sh") return skillsShUrl;
+
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const owner = parts[0];
+  const repo = parts[1];
+  const slug = parts[2];
+  if (!owner || !repo || !slug) {
+    throw new Error(`Invalid skills.sh URL (expected /owner/repo/skill): ${skillsShUrl}`);
+  }
+
+  const entry: SkillsShEntry = { owner, repo, slug, skillsShUrl };
+  const resolved = await resolveSkillsShUrls([entry], {
+    concurrency: 1,
+    timeout: 10_000,
+  });
+
+  const match = resolved.resolved[0];
+  if (!match) {
+    throw new Error(`Could not resolve skills.sh URL to raw SKILL.md: ${skillsShUrl}`);
+  }
+
+  return match.rawUrl;
+}
+
+async function resolveGithubCandidates(owner: string, repo: string, skillPath?: string): Promise<string[]> {
+  const candidateUrls: string[] = [];
+  const seen = new Set<string>();
+
+  const addCandidate = (url: string) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    candidateUrls.push(url);
+  };
+
+  try {
+    const repoInfoUrl = `${GITHUB_API_BASE}/repos/${owner}/${repo}`;
+    const repoInfo = await fetchJson<GithubRepoResponse>(repoInfoUrl);
+    const preferredBranch = repoInfo.default_branch ?? "main";
+    const branches = [preferredBranch, ...GITHUB_BRANCH_FALLBACKS.filter((b) => b !== preferredBranch)];
+
+    for (const branch of branches) {
+      const skillPaths = await fetchGithubSkillPaths(owner, repo, branch);
+      const selected = selectGithubSkillPaths(skillPaths, skillPath);
+      for (const path of selected) {
+        addCandidate(buildRawGithubUrl(owner, repo, branch, path));
+      }
+    }
+  } catch {
+    // Fall back to deterministic URL patterns below when GitHub API discovery is unavailable.
+  }
+
+  for (const url of buildFallbackGithubCandidates(owner, repo, skillPath)) {
+    addCandidate(url);
+  }
+
+  return candidateUrls;
+}
+
 /**
  * Format a TrustReport into a concise, readable summary.
  */
@@ -138,9 +381,10 @@ async function resolveAndScan(
   const fetchOpts = { timeout: 30_000, retries: 2, retryDelayMs: 750 };
 
   // Already a URL — scan directly
-  if (source.startsWith("http://") || source.startsWith("https://")) {
-    const report = await scanSkillFromUrl(source, { ...scanOpts, ...fetchOpts });
-    return { url: source, report };
+  if (isHttpUrl(source)) {
+    const resolvedUrl = await resolveSkillsShToRawUrl(source);
+    const report = await scanSkillFromUrl(resolvedUrl, { ...scanOpts, ...fetchOpts });
+    return { url: resolvedUrl, report };
   }
 
   // GitHub-style: owner/repo or owner/repo/skill
@@ -148,22 +392,8 @@ async function resolveAndScan(
   if (parts.length >= 2 && !source.includes(" ")) {
     const owner = parts[0]!;
     const repo = parts[1]!;
-
-    if (parts.length === 2) {
-      // Try owner/repo — look for SKILL.md in repo root
-      const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/SKILL.md`;
-      const report = await scanSkillFromUrl(url, { ...scanOpts, ...fetchOpts });
-      return { url, report };
-    }
-
-    // owner/repo/skill — try multiple candidate paths
-    const skill = parts.slice(2).join("/");
-    const candidates = [
-      `https://raw.githubusercontent.com/${owner}/${repo}/main/skills/${skill}/SKILL.md`,
-      `https://raw.githubusercontent.com/${owner}/${repo}/main/${skill}/SKILL.md`,
-      `https://raw.githubusercontent.com/${owner}/${repo}/master/skills/${skill}/SKILL.md`,
-      `https://raw.githubusercontent.com/${owner}/${repo}/master/${skill}/SKILL.md`,
-    ];
+    const skill = parts.length > 2 ? parts.slice(2).join("/") : undefined;
+    const candidates = await resolveGithubCandidates(owner, repo, skill);
 
     let lastError: unknown;
     for (const url of candidates) {
@@ -173,8 +403,7 @@ async function resolveAndScan(
       } catch (err) {
         lastError = err;
         // If it's a 404, try next candidate
-        const msg = err instanceof Error ? err.message : "";
-        if (msg.includes("404") || msg.includes("Not Found")) continue;
+        if (isNotFoundError(err)) continue;
         break;
       }
     }
@@ -241,12 +470,16 @@ server.tool(
   },
   async ({ url, semantic }) => {
     try {
-      const report = await scanSkillFromUrl(url, semantic ? { semantic: true } : undefined);
+      const { url: resolvedUrl, report } = await resolveAndScan(url, { semantic });
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(formatReport(report), null, 2),
+            text: JSON.stringify(
+              { sourceUrl: url, resolvedUrl, ...formatReport(report) },
+              null,
+              2
+            ),
           },
         ],
       };

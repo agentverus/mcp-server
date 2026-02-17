@@ -8,6 +8,8 @@ Security scanning for AI agent skills, exposed as MCP tools. Scan skills from Cl
 
 Add to your agent's MCP configuration:
 
+Published package: [`agentverus-scanner-mcp`](https://www.npmjs.com/package/agentverus-scanner-mcp)
+
 ### Claude Desktop / Cursor / Windsurf
 
 ```json
@@ -15,7 +17,7 @@ Add to your agent's MCP configuration:
   "mcpServers": {
     "agentverus": {
       "command": "npx",
-      "args": ["-y", "@agentverus/mcp-server"]
+      "args": ["-y", "agentverus-scanner-mcp"]
     }
   }
 }
@@ -28,7 +30,7 @@ Add to your agent's MCP configuration:
   "mcp": {
     "agentverus": {
       "command": "npx",
-      "args": ["-y", "@agentverus/mcp-server"]
+      "args": ["-y", "agentverus-scanner-mcp"]
     }
   }
 }
@@ -104,6 +106,7 @@ The scanner checks for 11 categories of agent-specific security risks:
 ## Links
 
 - [AgentVerus](https://agentverus.ai) — AI agent security platform
+- [MCP Server on npm](https://www.npmjs.com/package/agentverus-scanner-mcp) — This MCP server package
 - [Scanner on npm](https://www.npmjs.com/package/agentverus-scanner) — The underlying scanner
 - [ASST Taxonomy](https://agentverus.ai/docs/taxonomy) — Full security taxonomy
 
