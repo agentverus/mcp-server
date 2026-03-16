@@ -2,13 +2,18 @@
 
 Security scanning for AI agent skills, exposed as MCP tools. Scan skills from ClawHub, GitHub, skills.sh, or raw URLs — directly from your AI agent.
 
-**164 tests · 6 analyzers · ASST taxonomy · Sub-second scans**
+**164 tests · 6 analyzers · ASST taxonomy · Hosted trust_check commerce**
 
 ## Quick Start
 
 Add to your agent's MCP configuration:
 
 Published package: [`agentverus-scanner-mcp`](https://www.npmjs.com/package/agentverus-scanner-mcp)
+
+If you want the hosted commercial tools (`list_offers`, `trust_check`), set:
+
+- `AGENTVERUS_API_KEY` for authenticated calls to `https://agentverus.ai/api/v1/trust/check`
+- `AGENTVERUS_BASE_URL` only if you need a non-production AgentVerus base URL
 
 ### Claude Desktop / Cursor / Windsurf
 
@@ -47,6 +52,23 @@ check_skill({ source: "web-search" })
 check_skill({ source: "vercel-labs/agent-skills/react-best-practices" })
 ```
 
+### `list_offers`
+
+Fetch the machine-readable AgentVerus offer catalog.
+
+```
+list_offers({})
+```
+
+### `trust_check`
+
+Call the hosted AgentVerus Trust Check SKU. Requires `AGENTVERUS_API_KEY`.
+
+```
+trust_check({ url: "https://raw.githubusercontent.com/owner/repo/main/SKILL.md" })
+trust_check({ skillId: "11111111-1111-1111-1111-111111111111" })
+```
+
 ### `scan_url`
 
 Scan a skill from any URL — GitHub, ClawHub, skills.sh, or raw SKILL.md.
@@ -74,6 +96,7 @@ explain_finding({ id: "ASST-06" })
 ## Resources
 
 - `agentverus://taxonomy` — Full ASST taxonomy (11 categories)
+- `agentverus://offers` — Hosted offer catalog and billing metadata
 - `agentverus://about` — Scanner info and capabilities
 
 ## What It Scans For

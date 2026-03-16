@@ -103,6 +103,9 @@ const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
 const GITHUB_API_TIMEOUT_MS = 15_000;
 const GITHUB_BRANCH_FALLBACKS = ["main", "master"] as const;
+const AGENTVERUS_BASE_URL = process.env.AGENTVERUS_BASE_URL?.replace(/\/+$/, "") || "https://agentverus.ai";
+const AGENTVERUS_API_TIMEOUT_MS = 15_000;
+const MCP_REFERRAL_SOURCE = "agentverus-mcp-server";
 
 function isHttpUrl(source: string): boolean {
   return source.startsWith("http://") || source.startsWith("https://");
@@ -167,6 +170,45 @@ async function fetchJson<T>(url: string): Promise<T> {
     const suffix = formatHttpErrorBodySnippet(bodyText);
     throw new Error(
       `GitHub API request failed (${response.status} ${response.statusText}) for ${url}${suffix ? ` — ${suffix}` : ""}`
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+function getAgentVerusApiKey(): string {
+  const apiKey = process.env.AGENTVERUS_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "AGENTVERUS_API_KEY is required for hosted trust_check calls. Set it in the MCP server environment."
+    );
+  }
+  return apiKey;
+}
+
+async function fetchAgentVerusJson<T>(
+  path: string,
+  init?: RequestInit & { requireAuth?: boolean }
+): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  headers.set("User-Agent", "agentverus-mcp-server/0.2.0");
+
+  if (init?.requireAuth) {
+    headers.set("Authorization", `Bearer ${getAgentVerusApiKey()}`);
+  }
+
+  const response = await fetch(`${AGENTVERUS_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    signal: AbortSignal.timeout(AGENTVERUS_API_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const bodyText = await response.text();
+    const suffix = formatHttpErrorBodySnippet(bodyText);
+    throw new Error(
+      `AgentVerus API request failed (${response.status} ${response.statusText}) for ${path}${suffix ? ` — ${suffix}` : ""}`
     );
   }
 
@@ -422,10 +464,35 @@ async function resolveAndScan(
 
 const server = new McpServer({
   name: "agentverus",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 // ─── Tools ────────────────────────────────────────────────────
+
+server.tool(
+  "list_offers",
+  "List the current AgentVerus hosted offers, pricing previews, and billing states.",
+  {},
+  async () => {
+    try {
+      const catalog = await fetchAgentVerusJson<Record<string, unknown>>("/api/v1/offers");
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(catalog, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return {
+        content: [{ type: "text" as const, text: `Offer discovery failed: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+);
 
 server.tool(
   "scan_skill",
@@ -452,6 +519,73 @@ server.tool(
       const message = error instanceof Error ? error.message : "Unknown error";
       return {
         content: [{ type: "text" as const, text: `Scan failed: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "trust_check",
+  "Call the hosted AgentVerus Trust Check service. Requires AGENTVERUS_API_KEY in the MCP server environment.",
+  {
+    skillId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe("Existing AgentVerus skill UUID to evaluate"),
+    content: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Raw SKILL.md content to send to the hosted trust_check endpoint"),
+    url: z
+      .string()
+      .url()
+      .optional()
+      .describe("URL that resolves to skill content for hosted trust_check"),
+  },
+  async ({ skillId, content, url }) => {
+    const providedCount = [skillId, content, url].filter(Boolean).length;
+    if (providedCount !== 1) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Provide exactly one of skillId, content, or url.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const payload = await fetchAgentVerusJson<Record<string, unknown>>("/api/v1/trust/check", {
+        method: "POST",
+        requireAuth: true,
+        headers: {
+          "Content-Type": "application/json",
+          "X-AgentVerus-Referral-Source": MCP_REFERRAL_SOURCE,
+        },
+        body: JSON.stringify({
+          ...(skillId ? { skillId } : {}),
+          ...(content ? { content } : {}),
+          ...(url ? { url } : {}),
+        }),
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(payload, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return {
+        content: [{ type: "text" as const, text: `Trust check failed: ${message}` }],
         isError: true,
       };
     }
@@ -614,6 +748,36 @@ server.resource(
 );
 
 server.resource(
+  "offers",
+  "agentverus://offers",
+  async () => {
+    try {
+      const catalog = await fetchAgentVerusJson<Record<string, unknown>>("/api/v1/offers");
+      return {
+        contents: [
+          {
+            uri: "agentverus://offers",
+            mimeType: "application/json",
+            text: JSON.stringify(catalog, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return {
+        contents: [
+          {
+            uri: "agentverus://offers",
+            mimeType: "text/plain",
+            text: `Offer discovery failed: ${message}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+server.resource(
   "about",
   "agentverus://about",
   async () => ({
@@ -624,7 +788,7 @@ server.resource(
         text: JSON.stringify(
           {
             name: "AgentVerus Scanner",
-            version: "0.5.0",
+            version: "0.6.2",
             description:
               "Security and trust analysis for AI agent skills. Scans SKILL.md files, MCP server configurations, and agent packages for vulnerabilities using 164 tests across 6 analyzers.",
             website: "https://agentverus.ai",
@@ -642,6 +806,11 @@ server.resource(
               website: "https://agentverus.ai",
               scanner: "https://www.npmjs.com/package/agentverus-scanner",
               github: "https://github.com/agentverus/agentverus-scanner",
+            },
+            hostedOffers: {
+              catalog: `${AGENTVERUS_BASE_URL}/api/v1/offers`,
+              trustCheck: `${AGENTVERUS_BASE_URL}/api/v1/trust/check`,
+              auth: "Set AGENTVERUS_API_KEY in the MCP server environment to enable hosted trust_check calls.",
             },
           },
           null,

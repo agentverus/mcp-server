@@ -27,8 +27,10 @@ test("exposes expected tool surface", async () => {
     assert.deepEqual(names, [
       "check_skill",
       "explain_finding",
+      "list_offers",
       "scan_skill",
       "scan_url",
+      "trust_check",
     ]);
   } finally {
     await client.close();

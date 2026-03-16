@@ -9,6 +9,17 @@ An MCP (Model Context Protocol) server that wraps the `agentverus-scanner` npm p
 
 ## MCP Tools to Expose
 
+### 0. `list_offers`
+Fetch the live AgentVerus offer catalog from the hosted API.
+
+**Input:**
+- none
+
+**Output:**
+- `commerceVersion` (string)
+- `launchMode` (string)
+- `offers` (array): SKUs, price previews, billing mode/state, endpoint
+
 ### 1. `scan_skill`
 Scan a skill from raw text content (e.g., a SKILL.md file contents).
 
@@ -54,6 +65,22 @@ Get a detailed explanation of a specific ASST finding category.
 - `remediation` (string): How to fix it
 - `examples` (string): Common examples of this vulnerability
 
+### 5. `trust_check`
+Call the hosted AgentVerus `trust_check` SKU for a concise trust decision and pricing metadata.
+
+**Input:**
+- `skillId` (string, optional): Existing AgentVerus skill UUID
+- `content` (string, optional): Raw SKILL.md content
+- `url` (string, optional): URL to resolve and evaluate
+
+Exactly one input must be provided.
+
+**Output:**
+- `pricing` (object): SKU, unit price preview, billing mode/state, x402 beta flag
+- `target` (object): Resolved skillId/sourceUrl/contentHash
+- `result` (object): Overall score, badge, recommended action, risk summary, top findings
+- `requestId` (string): Server-side request ID
+
 ## MCP Resources to Expose
 
 ### 1. `agentverus://taxonomy`
@@ -62,11 +89,15 @@ The full ASST taxonomy reference — all 11 categories with descriptions.
 ### 2. `agentverus://about`
 Information about AgentVerus Scanner, version, capabilities.
 
+### 3. `agentverus://offers`
+Live hosted offer catalog for machine discovery.
+
 ## Technical Requirements
 - TypeScript with ES modules
 - Use `@modelcontextprotocol/sdk` Server class with stdio transport
 - Import `agentverus-scanner` functions: `scanSkill`, `scanSkillFromUrl`
 - For `check_skill`, reuse the check/source resolver logic from the scanner
+- For hosted commerce tools, call `https://agentverus.ai/api/v1/offers` and `https://agentverus.ai/api/v1/trust/check`
 - Package as `agentverus-scanner-mcp` on npm
 - Support `npx agentverus-scanner-mcp` for zero-install usage
 - Include a `bin` entry in package.json pointing to the compiled entry point

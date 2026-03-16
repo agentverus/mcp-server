@@ -1,7 +1,7 @@
 {
   "name": "agentverus-scanner-mcp",
-  "version": "0.1.1",
-  "description": "MCP server for AgentVerus — AI agent security scanning as MCP tools",
+  "version": "0.2.0",
+  "description": "MCP server for AgentVerus trust scanning and hosted trust_check commerce tools",
   "type": "module",
   "bin": {
     "agentverus-scanner-mcp": "dist/index.js"
@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "agentverus-scanner": "^0.5.0",
+    "agentverus-scanner": "^0.6.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
